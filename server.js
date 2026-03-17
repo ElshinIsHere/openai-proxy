@@ -92,7 +92,6 @@ wss.on("connection", (clientWs) => {
 
       console.log("VOX → OPENAI type: " + msg.type);
 
-      // input_audio_buffer.append — не ставим в queue
       if (msg.type === "input_audio_buffer.append") {
         if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
           openaiWs.send(str);
@@ -119,34 +118,28 @@ wss.on("connection", (clientWs) => {
     if (!isBinary) {
       try {
         const msg = JSON.parse(data.toString());
-        console.log("OPENAI → VOX type: " + msg.type + (msg.error ? " error: " + JSON.stringify(msg.error) : ""));
+        console.log("OPENAI → VOX type: " + msg.type);
 
-        // OpenAI audio delta — конвертируем в Voximplant media формат
+        // аудио дельта — декодируем base64 и шлём как бинарный фрейм
         if (msg.type === "response.audio.delta" && msg.delta) {
           if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(JSON.stringify({
-              event: "media",
-              media: { payload: msg.delta }
-            }));
+            const audioBuf = Buffer.from(msg.delta, "base64");
+            clientWs.send(audioBuf, { binary: true });
           }
           return;
         }
 
       } catch(e) {}
-    } else {
-      // бинарное аудио от OpenAI — конвертируем в base64 и шлём как media event
-      if (clientWs.readyState === WebSocket.OPEN) {
-        const base64 = data.toString("base64");
-        clientWs.send(JSON.stringify({
-          event: "media",
-          media: { payload: base64 }
-        }));
-      }
-      return;
-    }
 
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(data, { binary: isBinary });
+      // остальные JSON сообщения — пересылаем как есть
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data);
+      }
+    } else {
+      // бинарное аудио от OpenAI — пересылаем как есть
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data, { binary: true });
+      }
     }
   });
 
