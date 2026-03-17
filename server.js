@@ -1,3 +1,6 @@
+Вот полный server.js — скопируй целиком:
+
+```javascript
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 
@@ -60,7 +63,6 @@ wss.on("connection", (clientWs) => {
     sessionReady = true;
   });
 
-  // VoxImplant → OpenAI
   clientWs.on("message", (data, isBinary) => {
     if (isBinary) {
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
@@ -77,4 +79,36 @@ wss.on("connection", (clientWs) => {
     }
   });
 
-  // OpenA
+  openaiWs.on("message", (data, isBinary) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(data, { binary: isBinary });
+    }
+  });
+
+  openaiWs.on("close", (code, reason) => {
+    console.log("OpenAI disconnected", code, reason.toString());
+    sessionReady = false;
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+  });
+
+  openaiWs.on("error", (err) => {
+    console.error("OpenAI error", err.message);
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+  });
+
+  clientWs.on("close", () => {
+    console.log("VoxImplant disconnected");
+    sessionReady = false;
+    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
+  });
+
+  clientWs.on("error", (err) => {
+    console.error("VoxImplant error", err.message);
+    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
+  });
+});
+
+server.listen(PORT, () => {
+  console.log("Proxy running on port " + PORT);
+});
+```
