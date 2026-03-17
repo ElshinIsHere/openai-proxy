@@ -125,16 +125,18 @@ wss.on("connection", (clientWs) => {
           openaiWs.send(JSON.stringify({ type: "response.create" }));
         }
 
-        // аудио дельта — пересылаем JSON как есть
-        if (msg.type === "response.audio.delta") {
+        // аудио дельта — декодируем base64 и шлём как бинарный PCM16 фрейм
+        if (msg.type === "response.audio.delta" && msg.delta) {
           if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(data);
+            const audioBuf = Buffer.from(msg.delta, "base64");
+            clientWs.send(audioBuf, { binary: true });
           }
           return;
         }
 
       } catch(e) {}
 
+      // остальные JSON сообщения пересылаем как есть
       if (clientWs.readyState === WebSocket.OPEN) {
         clientWs.send(data);
       }
