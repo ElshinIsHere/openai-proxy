@@ -11,6 +11,18 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+// Даунсемплинг PCM16 с 24kHz до 8kHz (каждый 3й сэмпл)
+function downsample24to8(buffer) {
+  const inputSamples = buffer.length / 2;
+  const outputSamples = Math.floor(inputSamples / 3);
+  const output = Buffer.alloc(outputSamples * 2);
+  for (let i = 0; i < outputSamples; i++) {
+    const sample = buffer.readInt16LE(i * 3 * 2);
+    output.writeInt16LE(sample, i * 2);
+  }
+  return output;
+}
+
 function cleanSessionUpdate(raw) {
   try {
     const msg = JSON.parse(raw.toString());
@@ -125,18 +137,18 @@ wss.on("connection", (clientWs) => {
           openaiWs.send(JSON.stringify({ type: "response.create" }));
         }
 
-        // аудио дельта — декодируем base64 и шлём как бинарный PCM16 фрейм
+        // аудио дельта — ресемплируем 24kHz → 8kHz и шлём как бинарный PCM16
         if (msg.type === "response.audio.delta" && msg.delta) {
           if (clientWs.readyState === WebSocket.OPEN) {
-            const audioBuf = Buffer.from(msg.delta, "base64");
-            clientWs.send(audioBuf, { binary: true });
+            const pcm24 = Buffer.from(msg.delta, "base64");
+            const pcm8 = downsample24to8(pcm24);
+            clientWs.send(pcm8, { binary: true });
           }
           return;
         }
 
       } catch(e) {}
 
-      // остальные JSON сообщения пересылаем как есть
       if (clientWs.readyState === WebSocket.OPEN) {
         clientWs.send(data);
       }
