@@ -39,6 +39,7 @@ wss.on("connection", (clientWs) => {
 
   let openaiWs = null;
   let jsonQueue = [];
+  let audioQueue = [];
   let sessionReady = false;
 
   openaiWs = new WebSocket(
@@ -63,22 +64,36 @@ wss.on("connection", (clientWs) => {
   // VoxImplant → OpenAI
   clientWs.on("message", (data, isBinary) => {
     if (isBinary) {
+      // бинарное аудио
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(data, { binary: true });
       }
-    } else {
-      try {
-        const msg = JSON.parse(data.toString());
-        console.log("VOX → OPENAI type: " + msg.type);
-      } catch(e) {}
+      return;
+    }
 
-      const cleaned = cleanSessionUpdate(data);
+    const str = data.toString();
+
+    // аудио в текстовом фрейме — первый символ не { и не [
+    if (str.charAt(0) !== "{" && str.charAt(0) !== "[") {
+      console.log("Audio as text frame — forwarding as binary");
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
-        openaiWs.send(cleaned);
-      } else {
-        jsonQueue.push(cleaned);
-        console.log("Queued JSON, total: " + jsonQueue.length);
+        openaiWs.send(data, { binary: true });
       }
+      return;
+    }
+
+    // JSON сообщение
+    try {
+      const msg = JSON.parse(str);
+      console.log("VOX → OPENAI type: " + msg.type);
+    } catch(e) {}
+
+    const cleaned = cleanSessionUpdate(data);
+    if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+      openaiWs.send(cleaned);
+    } else {
+      jsonQueue.push(cleaned);
+      console.log("Queued JSON, total: " + jsonQueue.length);
     }
   });
 
