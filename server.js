@@ -11,13 +11,14 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-// Даунсемплинг PCM16 с 24kHz до 8kHz (каждый 3й сэмпл)
-function downsample24to8(buffer) {
+// Даунсемплинг PCM16 с 24kHz до 16kHz (каждый 3й сэмпл из 2)
+function downsample24to16(buffer) {
   const inputSamples = buffer.length / 2;
-  const outputSamples = Math.floor(inputSamples / 3);
+  const outputSamples = Math.floor(inputSamples * 2 / 3);
   const output = Buffer.alloc(outputSamples * 2);
   for (let i = 0; i < outputSamples; i++) {
-    const sample = buffer.readInt16LE(i * 3 * 2);
+    const srcIndex = Math.floor(i * 3 / 2);
+    const sample = buffer.readInt16LE(srcIndex * 2);
     output.writeInt16LE(sample, i * 2);
   }
   return output;
@@ -70,118 +71,3 @@ wss.on("connection", (clientWs) => {
     });
     jsonQueue = [];
     sessionReady = true;
-  });
-
-  // VoxImplant → OpenAI
-  clientWs.on("message", (data, isBinary) => {
-    if (isBinary) {
-      if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
-        openaiWs.send(data, { binary: true });
-      }
-      return;
-    }
-
-    const str = data.toString();
-
-    try {
-      const msg = JSON.parse(str);
-
-      if (msg.event === "media" && msg.media && msg.media.payload) {
-        if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
-          openaiWs.send(JSON.stringify({
-            type: "input_audio_buffer.append",
-            audio: msg.media.payload
-          }));
-        }
-        return;
-      }
-
-      if (!msg.type) {
-        console.log("Dropping unknown message, keys: " + Object.keys(msg).join(", "));
-        return;
-      }
-
-      console.log("VOX → OPENAI type: " + msg.type);
-
-      if (msg.type === "input_audio_buffer.append") {
-        if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
-          openaiWs.send(str);
-        }
-        return;
-      }
-
-    } catch(e) {
-      console.log("Non-JSON dropped");
-      return;
-    }
-
-    const cleaned = cleanSessionUpdate(data);
-    if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
-      openaiWs.send(cleaned);
-    } else {
-      jsonQueue.push(cleaned);
-      console.log("Queued JSON, total: " + jsonQueue.length);
-    }
-  });
-
-  // OpenAI → VoxImplant
-  openaiWs.on("message", (data, isBinary) => {
-    if (!isBinary) {
-      try {
-        const msg = JSON.parse(data.toString());
-        console.log("OPENAI → VOX type: " + msg.type);
-
-        // прокси сам отправляет response.create после session.updated
-        if (msg.type === "session.updated") {
-          console.log("Session updated — sending response.create from proxy");
-          openaiWs.send(JSON.stringify({ type: "response.create" }));
-        }
-
-        // аудио дельта — ресемплируем 24kHz → 8kHz и шлём как бинарный PCM16
-        if (msg.type === "response.audio.delta" && msg.delta) {
-          if (clientWs.readyState === WebSocket.OPEN) {
-            const pcm24 = Buffer.from(msg.delta, "base64");
-            const pcm8 = downsample24to8(pcm24);
-            clientWs.send(pcm8, { binary: true });
-          }
-          return;
-        }
-
-      } catch(e) {}
-
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(data);
-      }
-    } else {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(data, { binary: true });
-      }
-    }
-  });
-
-  openaiWs.on("close", (code, reason) => {
-    console.log("OpenAI disconnected", code, reason.toString());
-    sessionReady = false;
-    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
-  });
-
-  openaiWs.on("error", (err) => {
-    console.error("OpenAI error", err.message);
-    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
-  });
-
-  clientWs.on("close", () => {
-    console.log("VoxImplant disconnected");
-    sessionReady = false;
-    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
-  });
-
-  clientWs.on("error", (err) => {
-    console.error("VoxImplant error", err.message);
-    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
-  });
-});
-
-server.listen(PORT, () => {
-  console.log("Proxy running on port " + PORT);
-});
