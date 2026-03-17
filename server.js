@@ -42,7 +42,7 @@ wss.on("connection", (clientWs) => {
   let sessionReady = false;
 
   openaiWs = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2025-06-03",
+    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
     {
       headers: {
         "Authorization": "Bearer " + OPENAI_API_KEY,
@@ -77,36 +77,4 @@ wss.on("connection", (clientWs) => {
     }
   });
 
-  // OpenAI → VoxImplant
-  openaiWs.on("message", (data, isBinary) => {
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(data, { binary: isBinary });
-    }
-  });
-
-  openaiWs.on("close", (code, reason) => {
-    console.log("OpenAI disconnected", code, reason.toString());
-    sessionReady = false;
-    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
-  });
-
-  openaiWs.on("error", (err) => {
-    console.error("OpenAI error", err.message);
-    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
-  });
-
-  clientWs.on("close", () => {
-    console.log("VoxImplant disconnected");
-    sessionReady = false;
-    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
-  });
-
-  clientWs.on("error", (err) => {
-    console.error("VoxImplant error", err.message);
-    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
-  });
-});
-
-server.listen(PORT, () => {
-  console.log("Proxy running on port " + PORT);
-});
+  // OpenA
