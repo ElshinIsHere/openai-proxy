@@ -1,6 +1,3 @@
-Вот полный server.js — скопируй целиком:
-
-```javascript
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 
@@ -111,4 +108,3 @@ wss.on("connection", (clientWs) => {
 server.listen(PORT, () => {
   console.log("Proxy running on port " + PORT);
 });
-```
