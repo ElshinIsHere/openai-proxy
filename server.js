@@ -73,7 +73,13 @@ wss.on("connection", (clientWs) => {
 
     try {
       const msg = JSON.parse(str);
-      console.log("VOX → OPENAI type: " + msg.type);
+
+      if (!msg.type) {
+        console.log("UNDEFINED MSG keys: " + Object.keys(msg).join(", "));
+        console.log("UNDEFINED MSG sample: " + str.substring(0, 200));
+      } else {
+        console.log("VOX → OPENAI type: " + msg.type);
+      }
 
       // аудио не ставим в queue — дропаем пока сессия не готова
       if (msg.type === "input_audio_buffer.append") {
@@ -82,8 +88,14 @@ wss.on("connection", (clientWs) => {
         }
         return;
       }
+
+      // дропаем сообщения без type
+      if (!msg.type) {
+        console.log("Dropping message without type");
+        return;
+      }
+
     } catch(e) {
-      // не JSON — дропаем
       console.log("Non-JSON message dropped");
       return;
     }
