@@ -11,7 +11,6 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-// Даунсемплинг PCM16 с 24kHz до 16kHz (каждый 3й сэмпл из 2)
 function downsample24to16(buffer) {
   const inputSamples = buffer.length / 2;
   const outputSamples = Math.floor(inputSamples * 2 / 3);
@@ -71,3 +70,114 @@ wss.on("connection", (clientWs) => {
     });
     jsonQueue = [];
     sessionReady = true;
+  });
+
+  clientWs.on("message", (data, isBinary) => {
+    if (isBinary) {
+      if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+        openaiWs.send(data, { binary: true });
+      }
+      return;
+    }
+
+    const str = data.toString();
+
+    try {
+      const msg = JSON.parse(str);
+
+      if (msg.event === "media" && msg.media && msg.media.payload) {
+        if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+          openaiWs.send(JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: msg.media.payload
+          }));
+        }
+        return;
+      }
+
+      if (!msg.type) {
+        console.log("Dropping unknown message, keys: " + Object.keys(msg).join(", "));
+        return;
+      }
+
+      console.log("VOX → OPENAI type: " + msg.type);
+
+      if (msg.type === "input_audio_buffer.append") {
+        if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+          openaiWs.send(str);
+        }
+        return;
+      }
+
+    } catch(e) {
+      console.log("Non-JSON dropped");
+      return;
+    }
+
+    const cleaned = cleanSessionUpdate(data);
+    if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+      openaiWs.send(cleaned);
+    } else {
+      jsonQueue.push(cleaned);
+      console.log("Queued JSON, total: " + jsonQueue.length);
+    }
+  });
+
+  openaiWs.on("message", (data, isBinary) => {
+    if (!isBinary) {
+      try {
+        const msg = JSON.parse(data.toString());
+        console.log("OPENAI → VOX type: " + msg.type);
+
+        if (msg.type === "session.updated") {
+          console.log("Session updated — sending response.create from proxy");
+          openaiWs.send(JSON.stringify({ type: "response.create" }));
+        }
+
+        if (msg.type === "response.audio.delta" && msg.delta) {
+          if (clientWs.readyState === WebSocket.OPEN) {
+            const pcm24 = Buffer.from(msg.delta, "base64");
+            const pcm16 = downsample24to16(pcm24);
+            clientWs.send(pcm16, { binary: true });
+          }
+          return;
+        }
+
+      } catch(e) {}
+
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data);
+      }
+    } else {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data, { binary: true });
+      }
+    }
+  });
+
+  openaiWs.on("close", (code, reason) => {
+    console.log("OpenAI disconnected", code, reason.toString());
+    sessionReady = false;
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+  });
+
+  openaiWs.on("error", (err) => {
+    console.error("OpenAI error", err.message);
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+  });
+
+  clientWs.on("close", () => {
+    console.log("VoxImplant disconnected");
+    sessionReady = false;
+    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
+  });
+
+  clientWs.on("error", (err) => {
+    console.error("VoxImplant error", err.message);
+    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
+  });
+});
+
+server.listen(PORT, () => {
+  console.log("Proxy running on port " + PORT);
+});
