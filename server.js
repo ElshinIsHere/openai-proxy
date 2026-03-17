@@ -60,12 +60,18 @@ wss.on("connection", (clientWs) => {
     sessionReady = true;
   });
 
+  // VoxImplant → OpenAI
   clientWs.on("message", (data, isBinary) => {
     if (isBinary) {
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(data, { binary: true });
       }
     } else {
+      try {
+        const msg = JSON.parse(data.toString());
+        console.log("VOX → OPENAI type: " + msg.type);
+      } catch(e) {}
+
       const cleaned = cleanSessionUpdate(data);
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(cleaned);
@@ -76,7 +82,14 @@ wss.on("connection", (clientWs) => {
     }
   });
 
+  // OpenAI → VoxImplant
   openaiWs.on("message", (data, isBinary) => {
+    if (!isBinary) {
+      try {
+        const msg = JSON.parse(data.toString());
+        console.log("OPENAI → VOX type: " + msg.type + (msg.error ? " error: " + JSON.stringify(msg.error) : ""));
+      } catch(e) {}
+    }
     if (clientWs.readyState === WebSocket.OPEN) {
       clientWs.send(data, { binary: isBinary });
     }
