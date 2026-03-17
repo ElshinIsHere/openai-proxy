@@ -11,6 +11,29 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+function cleanSessionUpdate(raw) {
+  try {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type === "session.update" && msg.session) {
+      const ALLOWED = [
+        "modalities", "instructions", "voice",
+        "input_audio_format", "output_audio_format",
+        "input_audio_transcription", "turn_detection",
+        "temperature", "max_response_output_tokens",
+        "tools", "tool_choice"
+      ];
+      const cleanSession = {};
+      for (const key of ALLOWED) {
+        if (msg.session[key] !== undefined) cleanSession[key] = msg.session[key];
+      }
+      msg.session = cleanSession;
+      console.log("Cleaned session.update");
+      return JSON.stringify(msg);
+    }
+  } catch(e) {}
+  return raw;
+}
+
 wss.on("connection", (clientWs) => {
   console.log("VoxImplant connected");
 
@@ -30,39 +53,21 @@ wss.on("connection", (clientWs) => {
 
   openaiWs.on("open", () => {
     console.log("OpenAI connected — flushing " + jsonQueue.length + " queued JSON messages");
-    jsonQueue.forEach(msg => openaiWs.send(msg));
+    jsonQueue.forEach(raw => {
+      openaiWs.send(cleanSessionUpdate(raw));
+    });
     jsonQueue = [];
     sessionReady = true;
   });
 
-  // VoxImplant → OpenAI (с очисткой лишних полей)
+  // VoxImplant → OpenAI
   clientWs.on("message", (data, isBinary) => {
     if (isBinary) {
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(data, { binary: true });
       }
     } else {
-      let cleaned = data;
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "session.update" && msg.session) {
-          const ALLOWED = [
-            "modalities", "instructions", "voice",
-            "input_audio_format", "output_audio_format",
-            "input_audio_transcription", "turn_detection",
-            "temperature", "max_response_output_tokens",
-            "tools", "tool_choice"
-          ];
-          const cleanSession = {};
-          for (const key of ALLOWED) {
-            if (msg.session[key] !== undefined) cleanSession[key] = msg.session[key];
-          }
-          msg.session = cleanSession;
-          cleaned = JSON.stringify(msg);
-          console.log("Cleaned session.update sent to OpenAI");
-        }
-      } catch(e) {}
-
+      const cleaned = cleanSessionUpdate(data);
       if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(cleaned);
       } else {
