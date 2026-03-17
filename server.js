@@ -15,10 +15,9 @@ wss.on("connection", (clientWs) => {
     console.log("VoxImplant connected");
 
     let openaiWs = null;
-    let messageQueue = [];
-    let openaiReady = false;
+    let jsonQueue = [];
+    let sessionReady = false;
 
-    // Connect to OpenAI
     openaiWs = new WebSocket(
         "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
         {
@@ -30,33 +29,41 @@ wss.on("connection", (clientWs) => {
     );
 
     openaiWs.on("open", () => {
-        console.log("OpenAI connected — flushing " + messageQueue.length + " queued messages");
-        openaiReady = true;
-        // Flush buffered messages
-        messageQueue.forEach(msg => openaiWs.send(msg));
-        messageQueue = [];
+        console.log("OpenAI connected — flushing " + jsonQueue.length + " queued JSON messages");
+        jsonQueue.forEach(msg => openaiWs.send(msg));
+        jsonQueue = [];
+        sessionReady = true;
     });
 
     // VoxImplant → OpenAI
-    clientWs.on("message", (data) => {
-        if (openaiReady && openaiWs.readyState === WebSocket.OPEN) {
-            openaiWs.send(data);
+    clientWs.on("message", (data, isBinary) => {
+        if (isBinary) {
+            // Audio — only send if OpenAI is ready
+            if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+                openaiWs.send(data, { binary: true });
+            }
+            // Drop audio if not ready — that's fine, it will catch up
         } else {
-            // Buffer until OpenAI is ready
-            messageQueue.push(data);
-            console.log("Queued message, total: " + messageQueue.length);
+            // JSON control message — queue if not ready
+            if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
+                openaiWs.send(data);
+            } else {
+                jsonQueue.push(data);
+                console.log("Queued JSON, total: " + jsonQueue.length);
+            }
         }
     });
 
     // OpenAI → VoxImplant
-    openaiWs.on("message", (data) => {
+    openaiWs.on("message", (data, isBinary) => {
         if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(data);
+            clientWs.send(data, { binary: isBinary });
         }
     });
 
     openaiWs.on("close", (code, reason) => {
         console.log("OpenAI disconnected:", code, reason.toString());
+        sessionReady = false;
         if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
     });
 
@@ -67,6 +74,7 @@ wss.on("connection", (clientWs) => {
 
     clientWs.on("close", () => {
         console.log("VoxImplant disconnected");
+        sessionReady = false;
         if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
     });
 
