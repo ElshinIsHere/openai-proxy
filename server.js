@@ -74,7 +74,7 @@ wss.on("connection", (clientWs) => {
     try {
       const msg = JSON.parse(str);
 
-      // Voximplant media event — конвертируем в OpenAI формат
+      // Voximplant media event
       if (msg.event === "media" && msg.media && msg.media.payload) {
         if (sessionReady && openaiWs.readyState === WebSocket.OPEN) {
           openaiWs.send(JSON.stringify({
@@ -120,6 +120,12 @@ wss.on("connection", (clientWs) => {
         const msg = JSON.parse(data.toString());
         console.log("OPENAI → VOX type: " + msg.type);
 
+        // Прокси сам отправляет response.create после session.updated
+        if (msg.type === "session.updated") {
+          console.log("Session updated — sending response.create from proxy");
+          openaiWs.send(JSON.stringify({ type: "response.create" }));
+        }
+
         // аудио дельта — декодируем base64 и шлём как бинарный фрейм
         if (msg.type === "response.audio.delta" && msg.delta) {
           if (clientWs.readyState === WebSocket.OPEN) {
@@ -131,12 +137,10 @@ wss.on("connection", (clientWs) => {
 
       } catch(e) {}
 
-      // остальные JSON сообщения — пересылаем как есть
       if (clientWs.readyState === WebSocket.OPEN) {
         clientWs.send(data);
       }
     } else {
-      // бинарное аудио от OpenAI — пересылаем как есть
       if (clientWs.readyState === WebSocket.OPEN) {
         clientWs.send(data, { binary: true });
       }
